@@ -2,7 +2,7 @@
 
 // OpenGarage
 angular.module( "opengarage.cloud", [ "opengarage.utils" ] )
-    .factory( "Cloud", [ "$injector", "$rootScope", "Utils", function( $injector, $rootScope, Utils ) {
+    .factory( "Cloud", [ "$injector", "$rootScope", "Utils", "Settings", function( $injector, $rootScope, Utils, Settings ) {
 
         var requestAuth = function() {
                 $ionicPopup = $ionicPopup || $injector.get( "$ionicPopup" );
@@ -39,27 +39,25 @@ angular.module( "opengarage.cloud", [ "opengarage.utils" ] )
                 callback = callback || function() {};
                 $http = $http || $injector.get( "$http" );
                 $httpParamSerializerJQLike = $httpParamSerializerJQLike || $injector.get( "$httpParamSerializerJQLike" );
-
                 $http( {
                     method: "POST",
-                    url: "https://opengarage.io/wp-admin/admin-ajax.php",
-					headers: {
-						"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-					},
+                    url: Settings.httpServer + "/api/user/signin",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                    },
                     data: $httpParamSerializerJQLike( {
-                        action: "ajaxLogin",
-                        username: user,
-                        password: pass
+                        email: encodeURIComponent( user ),
+                        password: encodeURIComponent( pass )
                     } )
                 } ).then( function( result ) {
-                    if ( typeof result.data.token === "string" ) {
+                    if ( result.data.user !== undefined ) {
                         Utils.storage.set( {
-                            "cloudToken": result.data.token,
+                            "cloudToken": result.data.user.apikey,
                             "cloudDataToken": sjcl.codec.hex.fromBits( sjcl.hash.sha256.hash( pass ) )
                         } );
                         $rootScope.isSynced = true;
                     }
-                    callback( result.data.loggedin );
+                    callback( result );
                 }, function() {
                     callback( false );
                 } );
@@ -69,134 +67,121 @@ angular.module( "opengarage.cloud", [ "opengarage.utils" ] )
                 $rootScope.isSynced = false;
             },
             syncStart = function() {
-                $ionicActionSheet = $ionicActionSheet || $injector.get( "$ionicActionSheet" );
 
-                getSites( function( sites ) {
-                    if ( JSON.stringify( sites ) === JSON.stringify( $rootScope.controllers ) ) {
+                getControllers( function( controllers ) {
+                    if ( JSON.stringify( controllers ) === JSON.stringify( $rootScope.controllers ) ) {
                         return;
                     }
 
-                    if ( Object.keys( sites ).length > 0 ) {
-
-                        var finish = function() {
-							$rootScope.controllers = sites;
-                            Utils.storage.set( { "controllers": JSON.stringify( sites ) }, saveSites );
-                            Utils.updateQuickLinks();
-                        };
-
-                        // Handle how to merge when cloud is populated
-                        $ionicActionSheet.show( {
-                            buttons: [
-                                { text: "<i class='icon ion-merge'></i> Merge" },
-                                { text: "<i class='icon ion-ios-cloud-download'></i> Replace local with cloud" },
-                                { text: "<i class='icon ion-ios-cloud-upload'></i> Replace cloud with local" }
-                            ],
-                            titleText: "Select Merge Method",
-                            cancelText: "Cancel",
-                            buttonClicked: function( index ) {
-                                if ( index === 1 ) {
-
-                                    // Replace local with cloud
-                                    finish();
-                                } else if ( index === 2 ) {
-
-                                    // Replace cloud with local
-                                    sites = $rootScope.controllers;
-                                    finish();
-                                } else {
-									$filter = $filter || $injector.get( "$filter" );
-
-                                    // Merge data
-                                    sites = $filter( "unique" )( $rootScope.controllers.concat( sites ), "mac" );
-                                    finish();
-                                }
-                                return true;
-                            }
-                        } );
-                    } else {
-                        saveSites();
+                    if ( Object.keys( controllers ).length > 0 ) {
+                        $rootScope.controllers = controllers;
+                        Utils.storage.set( { "controllers": JSON.stringify( controllers ) }, function() { } );
+                        Utils.updateQuickLinks();
                     }
                 } );
             },
             sync = function( callback ) {
                 callback = callback || function() {};
-
-                Utils.storage.get( "cloudToken", function( local ) {
-                    if ( typeof local.cloudToken !== "string" ) {
-                        return;
+                getControllers( function( data ) {
+                    if ( data !== false ) {
+                        Utils.storage.set( { "controllers": JSON.stringify( data ) }, callback );
+                        $rootScope.controllers = data;
+                        Utils.updateQuickLinks();
                     }
-
-                    getSites( function( data ) {
-                        if ( data !== false ) {
-                            $rootScope.controllers = data;
-                            Utils.storage.set( { "controllers": JSON.stringify( data ) }, callback );
-                            Utils.updateQuickLinks();
-                        }
-                    } );
                 } );
             },
-            getSites = function( callback ) {
+            deleteController = function( device, callback ) {
+                callback = callback || function() {};
+                $http = $http || $injector.get( "$http" );
+                var local = Utils.storage.get( [ "cloudToken" ] );
+                $http( {
+                    method: "DELETE",
+                    url: Settings.httpServer + "/api/device/" + device.deviceid,
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                    },
+                    params: {
+                        "apikey": local.cloudToken
+                    }
+                } ).then( function( result ) {
+                    callback( result.data );
+                }, function() {
+                    callback( false );
+                } );
+            },
+            getControllers = function( callback ) {
                 callback = callback || function() {};
                 $http = $http || $injector.get( "$http" );
                 $httpParamSerializerJQLike = $httpParamSerializerJQLike || $injector.get( "$httpParamSerializerJQLike" );
 
-                Utils.storage.get( [ "cloudToken", "cloudDataToken" ], function( local ) {
+                Utils.storage.get( [ "cloudToken" ], function( local ) {
                     if ( local.cloudToken === undefined || local.cloudToken === null ) {
                         callback( false );
                         return;
                     }
 
-                    if ( local.cloudDataToken === undefined || local.cloudDataToken === null ) {
-                        handleInvalidDataToken();
-                        callback( false );
-                        return;
-                    }
-
                     $http( {
-                        method: "POST",
-                        url: "https://opengarage.io/wp-admin/admin-ajax.php",
-						headers: {
-							"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-						},
-                        data: $httpParamSerializerJQLike( {
-                            action: "getSites",
-                            token: local.cloudToken,
-                            controllerType: "opengarage"
-                        } )
+                        method: "GET",
+                        url: Settings.httpServer + "/api/device",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                        },
+                        params: {
+                            "apikey": local.cloudToken
+                        }
                     } ).then( function( result ) {
-                        if ( result.data.success === false || result.data.sites === "" ) {
-                            if ( result.data.message === "BAD_TOKEN" ) {
-                                handleExpiredLogin();
-                            }
-                            callback( false, result.data.message );
-                        } else {
-                            Utils.storage.set( { "cloudToken": result.data.token } );
-                            var sites;
-
-                            try {
-                                sites = sjcl.decrypt( local.cloudDataToken, result.data.sites );
-                            } catch ( err ) {
-                                if ( err.message === "ccm: tag doesn't match" ) {
-                                    handleInvalidDataToken();
+                        if ( result.data.length !== undefined ) {
+                            for ( var i in result.data ) {
+                                if ( !result.data[ i ].hasOwnProperty( "mac" ) ) {
+                                    result.data[ i ].mac = result.data[ i ].deviceid;
                                 }
-                                callback( false );
-                            }
-
-                            try {
-                                callback( JSON.parse( sites ) );
-                            } catch ( err ) {
-                                callback( false );
                             }
                         }
+                        callback( result.data );
                     }, function() {
                         callback( false );
                     } );
                 } );
             },
-            saveSites = function( callback ) {
-				if ( typeof callback !== "function" ) {
-	                callback = function() {};
-				}
+            saveController = function( callback ) {
+                if ( typeof callback !== "function" ) {
+                    callback = function() {};
+                }
+                $http = $http || $injector.get( "$http" );
+                $httpParamSerializerJQLike = $httpParamSerializerJQLike || $injector.get( "$httpParamSerializerJQLike" );
+
+                Utils.storage.get( [ "cloudToken", "cloudDataToken" ], function( local ) {
+                    if ( local.cloudToken === null || local.cloudToken === undefined ) {
+                        callback( false );
+                        return;
+                    }
+                    var data = {
+                        name: "My door",
+                        group: "default",
+                        deviceid: "deviceid",
+                        apikey: local.cloudToken,
+                        type: "01",
+                        ipAddr: "192."
+                    };
+
+                    $http( {
+                        method: "POST",
+                        url: Settings.httpServer + "/api/device",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                        },
+                        data: $httpParamSerializerJQLike( data )
+                    } ).then( function( result ) {
+                        callback( result.data.success );
+                    }, function() {
+                        callback( false );
+                    } );
+                } );
+            },
+            saveControllers = function( callback ) {
+                if ( typeof callback !== "function" ) {
+                    callback = function() {};
+                }
                 $http = $http || $injector.get( "$http" );
                 $httpParamSerializerJQLike = $httpParamSerializerJQLike || $injector.get( "$httpParamSerializerJQLike" );
 
@@ -209,11 +194,10 @@ angular.module( "opengarage.cloud", [ "opengarage.utils" ] )
                     $http( {
                         method: "POST",
                         url: "https://opengarage.io/wp-admin/admin-ajax.php",
-						headers: {
-							"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-						},
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                        },
                         data: $httpParamSerializerJQLike( {
-                            action: "saveSites",
                             token: data.cloudToken,
                             controllerType: "opengarage",
                             sites: encodeURIComponent( JSON.stringify( sjcl.encrypt( data.cloudDataToken, JSON.stringify( $rootScope.controllers ) ) ) )
@@ -272,17 +256,30 @@ angular.module( "opengarage.cloud", [ "opengarage.utils" ] )
             getTokenUser = function( token ) {
                 return atob( token ).split( "|" )[ 0 ];
             },
-            $http, $httpParamSerializerJQLike, $filter, $ionicPopup, $ionicActionSheet;
+            isLoggedIn = function( ) {
+                var local = Utils.storage.get( [ "cloudToken", "cloudDataToken" ] );
+
+                // If cloud api key is missing
+                if ( local.cloudToken === undefined || local.cloudToken === null ) {
+                    return false;
+                }
+
+                // If password not available
+                if ( local.cloudDataToken === undefined || local.cloudDataToken === null ) {
+                    return false;
+                }
+                return true;
+            },
+            $http, $httpParamSerializerJQLike, $ionicPopup;
 
         Utils.storage.get( [ "cloudToken", "cloudDataToken" ], function( data ) {
-			if ( data.cloudToken === null || data.cloudToken === undefined || data.cloudDataToken === undefined || data.cloudDataToken === undefined ) {
-				$rootScope.isSynced = false;
-			} else {
-				$rootScope.isSynced = true;
-			}
-        } );
 
-        $rootScope.$on( "controllersUpdated", saveSites );
+            if ( data.cloudToken === null || data.cloudToken === undefined || data.cloudDataToken === undefined || data.cloudDataToken === undefined ) {
+                $rootScope.isSynced = false;
+            } else {
+                $rootScope.isSynced = true;
+            }
+        } );
 
         return {
             requestAuth: requestAuth,
@@ -290,10 +287,13 @@ angular.module( "opengarage.cloud", [ "opengarage.utils" ] )
             logout: logout,
             syncStart: syncStart,
             sync: sync,
-            getSites: getSites,
-            saveSites: saveSites,
+            deleteController: deleteController,
+            getControllers: getControllers,
+            saveController: saveController,
+            saveControllers: saveControllers,
             handleInvalidDataToken: handleInvalidDataToken,
             handleExpiredLogin: handleExpiredLogin,
-            getTokenUser: getTokenUser
+            getTokenUser: getTokenUser,
+            isLoggedIn: isLoggedIn
         };
     } ] );

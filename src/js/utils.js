@@ -2,7 +2,7 @@
 
 // OpenGarage
 angular.module( "opengarage.utils", [] )
-    .factory( "Utils", [ "$injector", "$rootScope", function( $injector, $rootScope ) {
+    .factory( "Utils", [ "$injector", "$rootScope", "Settings", function( $injector, $rootScope, Settings ) {
 
 		var isFireFox = /Firefox/.test( window.navigator.userAgent ),
 			isIE = /MSIE\s|Trident\/|Edge\//.test( window.navigator.userAgent ),
@@ -26,10 +26,11 @@ angular.module( "opengarage.utils", [] )
                     }
 
                     callback( data );
+                    return data;
 	            },
 	            set: function( query, callback ) {
 	                callback = callback || function() {};
-
+	                $ionicPopup = $ionicPopup || $injector.get( "$ionicPopup" );
                     var i;
                     if ( typeof query === "object" ) {
                         for ( i in query ) {
@@ -43,20 +44,16 @@ angular.module( "opengarage.utils", [] )
 	            },
 	            remove: function( query, callback ) {
 	                callback = callback || function() {};
-
-                    var i;
-
-                    if ( typeof query === "string" ) {
-                        query = [ query ];
-                    }
-
-                    for ( i in query ) {
-                        if ( query.hasOwnProperty( i ) ) {
-                            localStorage.removeItem( query[ i ] );
-                        }
-                    }
-
-                    callback( true );
+	                var i;
+	                if ( typeof query === "string" ) {
+				query = [ query ];
+	                }
+	                for ( i in query ) {
+				if ( query.hasOwnProperty( i ) ) {
+					localStorage.removeItem( query[ i ] );
+				}
+			}
+			callback( true );
 	            }
 	        },
 			intToIP = function( int ) {
@@ -72,65 +69,41 @@ angular.module( "opengarage.utils", [] )
 
 				var promise;
 
-				if ( token || ( !ip && ( $rootScope.activeController && $rootScope.activeController.auth ) ) ) {
+				// Cloud API
+				if ( token || ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) ) ) {
+					var data = {
+						"referer": "client",
+						"apikey": encodeURIComponent( token || $rootScope.activeController.apikey ),
+						"deviceid": $rootScope.activeController.deviceid,
+						"cmd": JSON.stringify( { "q": "jc", "args": {} } ),
+						"channel": "jc"
+					};
 					promise = $http( {
 						method: "POST",
-						url: "https://opengarage.io/wp-admin/admin-ajax.php",
+						url: Settings.httpServer + "/api/proxy/send",
 		                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-						data: "action=blynkCloud&path=" + encodeURIComponent( token || $rootScope.activeController.auth ) + "/query",
+						params: data,
 						suppressLoader: true
 					} );
 				} else {
 					promise = $http( {
 						method: "GET",
-						url: "http://" + ( ip || $rootScope.activeController.ip ) + "/jc",
+						url: "http://" + ( ip || $rootScope.activeController.ipAddr ) + "/jc",
 						suppressLoader: ip ? false : true
 					} );
 				}
 
 	            return promise.then(
 					function( result ) {
-						if ( token || ( !ip && ( $rootScope.activeController && $rootScope.activeController.auth ) ) ) {
-							if ( result.data === "Invalid token." ) {
+						if ( token || ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) ) ) {
+							if ( result.data.error !== undefined ) {
 								callback( false );
 								return;
 							}
 
-							$filter = $filter || $injector.get( "$filter" );
-							var filter = $filter( "filter" );
-
-							result = result.data[ 0 ];
-							callback( {
-								name: result.name,
-								door: parseInt( filter( result.pins, { "pin": 0 } )[ 0 ].value ),
-								dist: parseInt( filter( result.pins, { "pin": 3 } )[ 0 ].value ),
-								rcnt: parseInt( filter( result.pins, { "pin": 4 } )[ 0 ].value ),
-								lastUpdate: new Date().getTime()
-							} );
-						} else {
-							result.data.lastUpdate = new Date().getTime();
-							callback( result.data );
+							result.data = JSON.parse( result.data.r );
 						}
-					},
-					function() {
-						callback( false );
-					}
-				);
-	        },
-	        getControllerOptions = function( callback, ip, showLoader ) {
-				if ( ( !ip && !$rootScope.activeController ) || ( $rootScope.activeController && !$rootScope.activeController.ip ) ) {
-					callback( false );
-					return;
-				}
-
-				$http = $http || $injector.get( "$http" );
-
-	            return $http( {
-	                method: "GET",
-	                url: "http://" + ( ip || $rootScope.activeController.ip ) + "/jo",
-	                suppressLoader: showLoader ? false : true
-	            } ).then(
-					function( result ) {
+						result.data.lastUpdate = new Date().getTime();
 						callback( result.data );
 					},
 					function() {
@@ -138,12 +111,59 @@ angular.module( "opengarage.utils", [] )
 					}
 				);
 	        },
+	        getControllerOptions = function( callback, ip, showLoader ) {
+				if ( !$rootScope.activeController ) {
+					callback( false );
+					return;
+				}
+
+				$http = $http || $injector.get( "$http" );
+				var promise;
+				if ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) ) {
+					var data = {
+						"referer": "client",
+						"apikey": $rootScope.activeController.apikey,
+						"deviceid": $rootScope.activeController.deviceid,
+						"cmd": JSON.stringify( { "q": "jo", "args": {} } ),
+						"channel": "jo"
+					};
+					promise = $http( {
+						method: "POST",
+						url: Settings.httpServer + "/api/proxy/send",
+		                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+						params: data,
+						suppressLoader: true
+					} );
+				} else {
+					promise = $http( {
+		                method: "GET",
+		                url: "http://" + ( ip || $rootScope.activeController.ipAddr ) + "/jo",
+		                suppressLoader: showLoader ? false : true
+		            } );
+				}
+	            return promise.then(
+						function( result ) {
+							if ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) ) {
+								if ( result.data.error !== undefined ) {
+									callback( false );
+									return;
+								}
+
+								result.data = JSON.parse( result.data.r );
+							}
+							callback( result.data );
+						},
+						function() {
+							callback( false );
+						}
+					);
+	        },
 	        updateController = function() {
 				$q = $q || $injector.get( "$q" );
 				$filter = $filter || $injector.get( "$filter" );
 
-				var controller = angular.copy( $rootScope.activeController ),
-					save = function( data ) {
+				var controller = angular.copy( $rootScope.activeController );
+				var	save = function( data ) {
 						$rootScope.connected = true;
 						angular.extend( controller, data );
 					};
@@ -283,7 +303,7 @@ angular.module( "opengarage.utils", [] )
 
 	            $http( {
 	                method: "GET",
-	                url: "http://192.168.4.1/js",
+	                url: Settings.defaultIp + "/js",
 	                suppressLoader: typeof suppressLoader !== "undefined" ? suppressLoader : true,
 					timeout: 5000,
 					retryCount: 3
@@ -318,26 +338,28 @@ angular.module( "opengarage.utils", [] )
 			connectNewController = function( data ) {
 				$http = $http || $injector.get( "$http" );
 				$ionicPopup = $ionicPopup || $injector.get( "$ionicPopup" );
-
-	            $http( {
-	                method: "GET",
-	                url: "http://192.168.4.1/cc?ssid=" + encodeURIComponent( data.ssid ) + "&pass=" + encodeURIComponent( data.password )
-	            } ).then(
-					function( result ) {
-						if ( result.data.result === 1 ) {
-							setTimeout( saveNewController, 2000 );
-						} else {
+				storage.get( "cloudToken", function( local ) {
+					var auth = "&auth=" + local.cloudToken;
+					$http( {
+		                method: "GET",
+		                url: Settings.defaultIp + "cc?ssid=" + encodeURIComponent( data.ssid ) + "&pass=" + encodeURIComponent( data.password ) + auth
+		            } ).then(
+						function( result ) {
+							if ( result.data.result === 1 ) {
+								setTimeout( saveNewController, 2000 );
+							} else {
+								$ionicPopup.alert( {
+									template: "<p class='center'>Invalid SSID/password combination. Please try again.</p>"
+								} ).then( checkNewController );
+							}
+						},
+						function() {
 							$ionicPopup.alert( {
-								template: "<p class='center'>Invalid SSID/password combination. Please try again.</p>"
+								template: "<p class='center'>Unable to reach controller. Please try again.</p>"
 							} ).then( checkNewController );
 						}
-					},
-					function() {
-						$ionicPopup.alert( {
-							template: "<p class='center'>Unable to reach controller. Please try again.</p>"
-						} ).then( checkNewController );
-					}
-				);
+					);
+				} );
 			},
 			saveNewController = function() {
 				$http = $http || $injector.get( "$http" );
@@ -569,12 +591,12 @@ angular.module( "opengarage.utils", [] )
 
 				var promise;
 
-				if ( auth || ( $rootScope.activeController && $rootScope.activeController.auth ) ) {
+				if ( auth || ( $rootScope.activeController && $rootScope.activeController.apikey ) ) {
 					promise = $http( {
 						method: "POST",
 						url: "https://openthings.io/wp-admin/admin-ajax.php",
 		                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-						data: "action=blynkCloud&path=" + encodeURIComponent( ( auth || $rootScope.activeController.auth ) + "/update/V1?value=1" )
+						data: "action=blynkCloud&path=" + encodeURIComponent( ( auth || $rootScope.activeController.apikey ) + "/update/V1?value=1" )
 					} ).then( function() {
 						setTimeout( function() {
 							$http( {
@@ -582,7 +604,7 @@ angular.module( "opengarage.utils", [] )
 								url: "https://openthings.io/wp-admin/admin-ajax.php",
 				                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
 				                suppressLoader: true,
-								data: "action=blynkCloud&path=" + encodeURIComponent( ( auth || $rootScope.activeController.auth ) + "/update/V1?value=0" )
+								data: "action=blynkCloud&path=" + encodeURIComponent( ( auth || $rootScope.activeController.apikey ) + "/update/V1?value=0" )
 							} );
 						}, 1000 );
 					} );
@@ -677,18 +699,45 @@ angular.module( "opengarage.utils", [] )
 				} );
 			},
 			getLogs: function( callback ) {
-				if ( !$rootScope.activeController || !$rootScope.activeController.ip ) {
+				if ( !$rootScope.activeController ) {
 					callback( false );
 					return;
 				}
 
 				$http = $http || $injector.get( "$http" );
+				var promise;
 
-	            $http( {
-	                method: "GET",
-	                url: "http://" + $rootScope.activeController.ip + "/jl"
-	            } ).then(
+				if ( $rootScope.activeController && $rootScope.activeController.apikey ) {
+					var data = {
+						"referer": "client",
+						"apikey": $rootScope.activeController.apikey,
+						"deviceid": $rootScope.activeController.deviceid,
+						"cmd": JSON.stringify( { "q": "jl", "args": {} } ),
+						"channel": "jl"
+					};
+					promise = $http( {
+						method: "POST",
+						url: Settings.httpServer + "/api/proxy/send",
+		                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+						params: data,
+						suppressLoader: true
+					} );
+				} else {
+					promise = $http( {
+		                method: "GET",
+		                url: "http://" + $rootScope.activeController.ip + "/jl"
+		            } );
+				}
+	            return promise.then(
 					function( result ) {
+						if ( $rootScope.activeController && $rootScope.activeController.apikey ) {
+							if ( result.data.error !== undefined ) {
+								callback( false );
+								return;
+							}
+
+							result.data = JSON.parse( result.data.r );
+						}
 						callback( result.data.logs.sort( function( a, b ) { return b[ 0 ] - a[ 0 ]; } ) );
 					},
 					function() {
@@ -762,4 +811,15 @@ angular.module( "opengarage.utils", [] )
 				fileInput[ 0 ].click();
 			}
 	    };
+} ] )
+
+.factory( "Settings", [ function() {
+  var domain = "localhost:3000";
+
+  return {
+    httpServer: "http://" + domain,
+    websocketServer: "ws://" + domain,
+    defaultIp: "http://192.168.4.1",
+    http: "http://"
+  };
 } ] );

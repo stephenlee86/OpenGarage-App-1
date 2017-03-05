@@ -23,7 +23,6 @@
 				<ion-delete-button class="ion-minus-circled" ng-click="deleteController($index)"></ion-delete-button>
 				<h2>{{controller.name}}</h2>
 				<p ng-if="controller.lastUpdate">Last Updated: {{getTime(controller.lastUpdate)}}</p>
-				<ion-reorder-button class="ion-navicon" on-reorder="moveItem(controller, $fromIndex, $toIndex)"></ion-reorder-button>
 		    </ion-item>
 		</ion-list>
 		<div ng-hide="$root.controllers.length" class="center">

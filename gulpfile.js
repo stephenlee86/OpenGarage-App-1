@@ -53,7 +53,7 @@ gulp.task( "default", function( callback ) {
 } );
 
 gulp.task( "build", function( callback ) {
-	runSequence( "default", "images", "clean", callback );
+	runSequence( "default", callback );
 } );
 
 gulp.task( "bump", function() {

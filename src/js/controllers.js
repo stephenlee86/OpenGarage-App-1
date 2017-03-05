@@ -3,9 +3,17 @@
 angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.cloud" ] )
 
 	.controller( "LoginCtrl", function( $scope, $rootScope, $state, $ionicPopup, Cloud ) {
+
+		// Auto-login if user information is present
+		if ( Cloud.isLoggedIn( ) ) {
+			$state.go( "app.controllerSelect" );
+			return;
+		}
+
 		$scope.data = {};
 
 		$scope.submit = function() {
+
 			if ( !$scope.data.username ) {
 
 				// If no email is provided, throw an error
@@ -19,10 +27,14 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 					template: "<p class='center'>Please enter a password to continue.</p>"
 				} );
 			} else {
-				Cloud.login( $scope.data.username, $scope.data.password, function() {
-					Cloud.sync( function() {
-						$state.go( "app.controllerSelect" );
-					} );
+				Cloud.login( $scope.data.username, $scope.data.password, function( result ) {
+					if ( typeof result.data.error === "string" ) {
+						$ionicPopup.alert( {
+							template: "<p class='center'>" + result.data.error + "</p>"
+						} );
+						return;
+					}
+					$state.go( "app.controllerSelect" );
 				} );
 			}
 		};
@@ -32,7 +44,15 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 		};
 	} )
 
-	.controller( "ControllerSelectCtrl", function( $scope, $state, $rootScope, $timeout, $filter, $ionicModal, $ionicHistory, Utils, Cloud ) {
+	.controller( "ControllerSelectCtrl", function( $scope, $state, $rootScope, $timeout, $filter, $ionicModal, $ionicPopup, $ionicHistory, Utils, Cloud ) {
+
+		if ( !Cloud.isLoggedIn( ) ) {
+			$state.go( "login" );
+			return;
+		}
+
+		// Fetch devices from the cloud
+		Cloud.sync();
 		$scope.data = {
 			showDelete: false
 		};
@@ -50,21 +70,29 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 		};
 
 		$scope.deleteController = function( index ) {
-			if ( Utils.getControllerIndex() === index ) {
-				delete $rootScope.activeController;
-				Utils.storage.remove( "activeController" );
-			}
-
-			$rootScope.controllers.splice( index, 1 );
-			Utils.storage.set( { controllers: JSON.stringify( $rootScope.controllers ) } );
-			$rootScope.$broadcast( "controllersUpdated" );
-		};
-
-		$scope.moveItem = function( item, fromIndex, toIndex ) {
-			$rootScope.controllers.splice( fromIndex, 1 );
-			$rootScope.controllers.splice( toIndex, 0, item );
-			Utils.storage.set( { controllers: JSON.stringify( $rootScope.controllers ) } );
-			$rootScope.$broadcast( "controllersUpdated" );
+			var confirm = $ionicPopup.confirm( {
+				title: "Delete Controller",
+				template: "Are you sure?"
+		    } );
+			confirm.then( function( ans ) {
+				if ( ans ) {
+					var device = $rootScope.controllers[ index ];
+					Cloud.deleteController( device, function( result ) {
+						if ( typeof result.error === "string" ) {
+							$ionicPopup.alert( {
+								template: "<p>" + result.error + "</p>"
+							} );
+							return;
+						}
+						if ( Utils.getControllerIndex() === index ) {
+							delete $rootScope.activeController;
+							Utils.storage.remove( "activeController" );
+						}
+						$rootScope.controllers.splice( index, 1 );
+						Utils.storage.set( { controllers: JSON.stringify( $rootScope.controllers ) } );
+					} );
+				}
+			} );
 		};
 
 		$scope.getTime = function( timestamp ) {
@@ -72,11 +100,7 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 		};
 
 		$scope.changeSync = function() {
-			if ( $rootScope.isSynced ) {
-				Cloud.logout();
-			} else {
-				Cloud.requestAuth();
-			}
+			Cloud.syncStart();
 		};
 	} )
 
@@ -143,7 +167,11 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 		} );
 	} )
 
-	.controller( "MenuCtrl", function( $scope, $rootScope, $ionicActionSheet, $ionicPopup, $ionicSideMenuDelegate, $timeout, Utils ) {
+	.controller( "MenuCtrl", function( $scope, $rootScope, $state, $ionicActionSheet, $ionicPopup, $ionicSideMenuDelegate, $timeout, Utils, Cloud ) {
+		if ( !Cloud.isLoggedIn( ) ) {
+			$state.go( "login" );
+			return;
+		}
 
 		$scope.sideMenuDraggable = Utils.getControllerIndex() === 0 ? true : false;
 
@@ -154,18 +182,12 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 		$scope.showAddController = function() {
 			$ionicActionSheet.show( {
 				buttons: [
-					{ text: "<i class='icon ion-plus-circled'></i> Add by IP" },
-					{ text: "<i class='icon ion-network'></i> Add by Blynk Token" },
 					{ text: "<i class='icon ion-ios-color-wand'></i> Setup New Device" }
 				],
 				titleText: "Add Controller",
 				cancelText: "Cancel",
 				buttonClicked: function( index ) {
-					if ( index === 1 ) {
-						Utils.showAddBlynk();
-					} else if ( index === 0 ) {
-						Utils.showAddController();
-					} else {
+					if ( index === 0 ) {
 						Utils.checkNewController( function( result ) {
 							if ( !result ) {
 								$ionicPopup.alert( {
