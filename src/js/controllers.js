@@ -104,28 +104,44 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 		};
 	} )
 
-	.controller( "HistoryCtrl", function( $scope, $filter, Utils ) {
-		$scope.$on( "$ionicView.beforeEnter", function() {
-			Utils.getLogs( function( reply ) {
-				if ( reply ) {
-					var i, current, day;
+	.controller( "HistoryCtrl", function( $scope, $filter, $http, Utils ) {
+		var startTimeout = function() {
+			if ( $http.pendingRequests.length < 3 ) {
+				Utils.getLogs( function( reply ) {
+					$scope.onLogs( reply );
+					timeout = setTimeout( function() {
+						startTimeout();
+					}, 15000 );
+				} );
+			}
+		}, timeout;
 
-					$scope.isLocal = true;
+		$scope.onLogs = function( reply ) {
+			if ( reply ) {
+				var i, current, day;
 
-					for ( i = 0; i < reply.length; i++ ) {
-						current = new Date( reply[ i ][ 0 ] * 1000 ).toDateString();
+				$scope.isLocal = true;
 
-						if ( current !== day ) {
-							day = current;
-							reply.splice( i, 0, { isDivider: "true", day: current } );
-						}
+				for ( i = 0; i < reply.length; i++ ) {
+					current = new Date( reply[ i ][ 0 ] * 1000 ).toDateString();
+
+					if ( current !== day ) {
+						day = current;
+						reply.splice( i, 0, { isDivider: "true", day: current } );
 					}
-
-					$scope.logs = reply;
-				} else {
-					$scope.isLocal = false;
 				}
-			} );
+				$scope.logs = reply;
+			} else {
+				$scope.isLocal = false;
+			}
+		};
+
+		$scope.$on( "$ionicView.beforeEnter", function() {
+			startTimeout();
+		} );
+
+		$scope.$on( "$ionicView.beforeLeave", function() {
+			clearTimeout( timeout );
 		} );
 	} )
 
@@ -208,22 +224,53 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 	    };
 	} )
 
-	.controller( "HomeCtrl", function( $rootScope, $scope, $filter, $http, $timeout, Utils ) {
-		var startInterval = function() {
-				interval = setInterval( function() {
-					if ( $http.pendingRequests.length < 3 ) {
-						Utils.updateController();
-					}
-				}, 5000 );
-			},
-			interval;
+	.controller( "HomeCtrl", function( $rootScope, $scope, $ionicPopup, $filter, $http, $timeout, Utils ) {
+		var startTimeout = function() {
+			if ( $http.pendingRequests.length < 3 ) {
+				Utils.updateController( function() {
+					timeout = setTimeout( function() {
+						startTimeout();
+					}, 15000 );
+				} );
+			}
+		}, timeout;
 
-		$scope.toggleDoor = Utils.toggleDoor;
+		$scope.toggleDoor = function( ) {
+			var password = $rootScope.activeController.password;
+			if ( password === undefined || password === "" ) {
+				$ionicPopup.confirm( {
+					title: "Empty Password Field",
+					template: "<p class='center'>Are you sure you want to proceed?</p>"
+				} ).then( function( result ) {
+					if ( result ) {
+						$rootScope.activeController.password = "";
+						Utils.toggleDoor( function( ) {
+							var index = $rootScope.controllers.indexOf( ( $filter( "filter" )( $rootScope.controllers, { "mac": $rootScope.activeController.mac } ) || [] )[ 0 ] );
+							if ( index ) {
+								$rootScope.controllers[ index ] = $rootScope.activeController;
+								Utils.storage.set( { "controllers": JSON.stringify( $rootScope.controllers ), "activeController": JSON.stringify( $rootScope.activeController ) } );
+								$rootScope.$broadcast( "controllersUpdated" );
+							}
+						} );
+					}
+				} );
+			} else {
+				Utils.toggleDoor( function( ) {
+					var index = $rootScope.controllers.indexOf( ( $filter( "filter" )( $rootScope.controllers, { "mac": $rootScope.activeController.mac } ) || [] )[ 0 ] );
+					if ( index ) {
+						$rootScope.controllers[ index ] = $rootScope.activeController;
+						Utils.storage.set( { "controllers": JSON.stringify( $rootScope.controllers ), "activeController": JSON.stringify( $rootScope.activeController ) } );
+						$rootScope.$broadcast( "controllersUpdated" );
+					}
+				} );
+			}
+		};
+
 		$scope.selectPhoto = Utils.selectPhoto;
 		$scope.currentIndex = Utils.getControllerIndex();
 
 		$scope.changeController = function( direction ) {
-			clearInterval( interval );
+			clearTimeout( timeout );
 
 			var current = Utils.getControllerIndex(),
 				to = current + direction;
@@ -233,14 +280,14 @@ angular.module( "opengarage.controllers", [ "opengarage.utils", "opengarage.clou
 			}
 
 			$scope.currentIndex = to;
-			Utils.setController( to, startInterval );
+			Utils.setController( to, startTimeout );
 		};
 
 		$scope.$on( "$ionicView.beforeLeave", function() {
-			clearInterval( interval );
+			clearTimeout( timeout );
 		} );
 
-		$scope.$on( "$ionicView.beforeEnter", startInterval );
+		$scope.$on( "$ionicView.beforeEnter", startTimeout );
 
 		$rootScope.$on( "controllerUpdated", function() {
 			$scope.currentIndex = Utils.getControllerIndex();

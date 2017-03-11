@@ -5,6 +5,10 @@ angular.module( "opengarage.watch", [] )
     .factory( "Watch", [ "$injector", "$rootScope", function( $injector, $rootScope ) {
 
 		var loadApp = function() {
+            if ( window.applewatch === undefined ) {
+                return;
+            }
+
             window.applewatch.loadAppMain( {
                 title: "OpenGarage",
                 label: {

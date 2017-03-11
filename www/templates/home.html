@@ -1,6 +1,10 @@
 <ion-view>
 	<ion-nav-title>{{$root.activeController.name}}</ion-nav-title>
 	<ion-content has-bouncing="false" class="home vertical-center has-footer" scroll="false" on-swipe-right="changeController(-1)" on-swipe-left="changeController(1)">
+		<label class="item item-input">
+			<span class="input-label">Password</span>
+			<input type="password" name="password" placeholder="Password" ng-model="$root.activeController.password" />
+		</label>
 		<div class="background" ng-style="{'background-image':'url(' + $root.activeController.image + ')'}" ng-show="$root.activeController.image"></div>
 		<div class="prev arrow" ng-click="changeController(-1)" ng-show="currentIndex > 0">‹</div>
 		<button class="door-button" ng-click="toggleDoor()">{{ $root.activeController.door ? "Close" : "Open" }}</button>

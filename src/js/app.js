@@ -78,7 +78,7 @@ angular.module( "opengarage", [ "ionic", "uiCropper", "opengarage.controllers", 
 								if ( controller &&
 									( data[ 0 ] === "open" && controller.door === 0 ) &&
 									( data[ 0 ] === "close" && controller.door === 1 ) ) {
-										Utils.toggleDoor( controller.auth );
+										Utils.toggleDoor( controller.apikey );
 								}
 							} );
 						} );
@@ -101,7 +101,7 @@ angular.module( "opengarage", [ "ionic", "uiCropper", "opengarage.controllers", 
 					if ( data[ 0 ] === "toggle" ) {
 						var controller = $filter( "filter" )( $rootScope.controllers, { "mac": data[ 1 ] } );
 						if ( controller ) {
-							Utils.toggleDoor( controller.auth );
+							Utils.toggleDoor( controller.apikey );
 						}
 					}
 				};

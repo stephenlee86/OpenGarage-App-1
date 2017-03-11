@@ -2,7 +2,7 @@
 
 // OpenGarage
 angular.module( "opengarage.utils", [] )
-    .factory( "Utils", [ "$injector", "$rootScope", "Settings", function( $injector, $rootScope, Settings ) {
+    .factory( "Utils", [ "$injector", "$rootScope", "Settings", "CloudProxy", function( $injector, $rootScope, Settings, CloudProxy ) {
 
 		var isFireFox = /Firefox/.test( window.navigator.userAgent ),
 			isIE = /MSIE\s|Trident\/|Edge\//.test( window.navigator.userAgent ),
@@ -68,40 +68,21 @@ angular.module( "opengarage.utils", [] )
 				$http = $http || $injector.get( "$http" );
 
 				var promise;
-
-				// Cloud API
-				if ( token || ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) ) ) {
-					var data = {
-						"referer": "client",
-						"apikey": encodeURIComponent( token || $rootScope.activeController.apikey ),
-						"deviceid": $rootScope.activeController.deviceid,
-						"cmd": JSON.stringify( { "q": "jc", "args": {} } ),
-						"channel": "jc"
-					};
-					promise = $http( {
-						method: "POST",
-						url: Settings.httpServer + "/api/proxy/send",
-		                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-						params: data,
-						suppressLoader: true
-					} );
-				} else {
-					promise = $http( {
-						method: "GET",
-						url: "http://" + ( ip || $rootScope.activeController.ipAddr ) + "/jc",
-						suppressLoader: ip ? false : true
-					} );
-				}
+				var data = {
+					"referer": "client",
+					"apikey": encodeURIComponent( token || $rootScope.activeController.apikey ),
+					"deviceid": $rootScope.activeController.deviceid,
+					"cmd": JSON.stringify( { "q": "jc", "args": {} } ),
+					"ch": "jc"
+				};
+				var isCloud = token || ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) );
+				promise = CloudProxy.send( isCloud, data );
 
 	            return promise.then(
 					function( result ) {
-						if ( token || ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) ) ) {
-							if ( result.data.error !== undefined ) {
-								callback( false );
-								return;
-							}
-
-							result.data = JSON.parse( result.data.r );
+						if ( result.data.error !== undefined ) {
+							callback( false );
+							return;
 						}
 						result.data.lastUpdate = new Date().getTime();
 						callback( result.data );
@@ -117,39 +98,28 @@ angular.module( "opengarage.utils", [] )
 					return;
 				}
 
-				$http = $http || $injector.get( "$http" );
 				var promise;
-				if ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) ) {
-					var data = {
-						"referer": "client",
-						"apikey": $rootScope.activeController.apikey,
-						"deviceid": $rootScope.activeController.deviceid,
-						"cmd": JSON.stringify( { "q": "jo", "args": {} } ),
-						"channel": "jo"
-					};
-					promise = $http( {
-						method: "POST",
-						url: Settings.httpServer + "/api/proxy/send",
-		                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-						params: data,
-						suppressLoader: true
-					} );
-				} else {
-					promise = $http( {
-		                method: "GET",
-		                url: "http://" + ( ip || $rootScope.activeController.ipAddr ) + "/jo",
-		                suppressLoader: showLoader ? false : true
-		            } );
-				}
+				var data = {
+					"referer": "client",
+					"apikey": $rootScope.activeController.apikey,
+					"deviceid": $rootScope.activeController.deviceid,
+					"cmd": JSON.stringify( { "q": "jo", "args": {} } ),
+					"ch": "jo"
+				};
+
+				// Cloud access
+				var isCloud = !ip && ( $rootScope.activeController && $rootScope.activeController.apikey );
+				promise = CloudProxy.send( isCloud, data, showLoader );
+
 	            return promise.then(
 						function( result ) {
-							if ( !ip && ( $rootScope.activeController && $rootScope.activeController.apikey ) ) {
-								if ( result.data.error !== undefined ) {
-									callback( false );
-									return;
-								}
-
-								result.data = JSON.parse( result.data.r );
+							if ( result.data.error !== undefined ) {
+								callback( false );
+								return;
+							}
+							if ( result.data.r !== undefined && result.data.r !== "" ) {
+								callback( false );
+								return;
 							}
 							callback( result.data );
 						},
@@ -158,29 +128,36 @@ angular.module( "opengarage.utils", [] )
 						}
 					);
 	        },
-	        updateController = function() {
+	        updateController = function( callback ) {
 				$q = $q || $injector.get( "$q" );
 				$filter = $filter || $injector.get( "$filter" );
-
+				callback = callback || function() {};
 				var controller = angular.copy( $rootScope.activeController );
 				var	save = function( data ) {
 						$rootScope.connected = true;
 						angular.extend( controller, data );
 					};
-
-				$q.when()
+				var promise;
+				if ( controller.mnt === undefined ) {
+					promise = $q.when()
 					.then( function() { return getControllerSettings( save ); } )
-					.then( function() { return getControllerOptions( save ); } )
-					.then( function() {
-						var index = getControllerIndex();
+					.then( function() { return getControllerOptions( save ); } );
+				} else {
+					promise = $q.when()
+					.then( function() { return getControllerSettings( save ); } );
+				}
+				promise.then( function() {
+					var index = getControllerIndex();
 
-						if ( index >= 0 && controller.mac === $rootScope.activeController.mac ) {
-							$rootScope.controllers[ index ] = controller;
-							$rootScope.activeController = controller;
-							$rootScope.$broadcast( "controllerUpdated" );
-							storage.set( { "controllers": JSON.stringify( $rootScope.controllers ), "activeController": JSON.stringify( $rootScope.activeController ) } );
-						}
-					} );
+					if ( index >= 0 && controller.mac === $rootScope.activeController.mac ) {
+						$rootScope.controllers[ index ] = controller;
+						$rootScope.activeController = controller;
+						$rootScope.$broadcast( "controllerUpdated" );
+						storage.set( { "controllers": JSON.stringify( $rootScope.controllers ), "activeController": JSON.stringify( $rootScope.activeController ) } );
+					}
+
+					callback();
+				} );
 	        },
 	        getControllerIndex = function( mac ) {
 				if ( !$rootScope.activeController && !mac ) {
@@ -587,29 +564,20 @@ angular.module( "opengarage.utils", [] )
 				}
 
 				callback = callback || function() {};
-				$http = $http || $injector.get( "$http" );
 
 				var promise;
-
+				var data = {
+					"referer": "client",
+					"apikey": $rootScope.activeController.apikey,
+					"deviceid": $rootScope.activeController.deviceid,
+					"cmd": JSON.stringify( { "q": "cc", "args": { "p": "click", "dkey": encodeURIComponent( $rootScope.activeController.password ) } } ),
+					"ch": "cc"
+				};
 				if ( auth || ( $rootScope.activeController && $rootScope.activeController.apikey ) ) {
-					promise = $http( {
-						method: "POST",
-						url: "https://openthings.io/wp-admin/admin-ajax.php",
-		                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-						data: "action=blynkCloud&path=" + encodeURIComponent( ( auth || $rootScope.activeController.apikey ) + "/update/V1?value=1" )
-					} ).then( function() {
-						setTimeout( function() {
-							$http( {
-								method: "POST",
-								url: "https://openthings.io/wp-admin/admin-ajax.php",
-				                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-				                suppressLoader: true,
-								data: "action=blynkCloud&path=" + encodeURIComponent( ( auth || $rootScope.activeController.apikey ) + "/update/V1?value=0" )
-							} );
-						}, 1000 );
-					} );
+					promise = CloudProxy.send( true, data );
 				} else {
-					promise = $http.get( "http://" + $rootScope.activeController.ip + "/cc?dkey=" + encodeURIComponent( $rootScope.activeController.password ) + "&click=1" );
+					data.params = { "dkey": encodeURIComponent( $rootScope.activeController.password ), "click": 1 };
+					promise = CloudProxy.send( false, data );
 				}
 
 	            promise.then(
@@ -622,7 +590,6 @@ angular.module( "opengarage.utils", [] )
 				);
 			},
 			restartController: function() {
-				$http = $http || $injector.get( "$http" );
 				$ionicPopup = $ionicPopup || $injector.get( "$ionicPopup" );
 
 				if ( $rootScope.activeController ) {
@@ -631,22 +598,58 @@ angular.module( "opengarage.utils", [] )
 						template: "<p class='center'>Are you sure you want to restart the controller?</p>"
 					} ).then( function( result ) {
 						if ( result ) {
-							$http.get( "http://" + $rootScope.activeController.ip + "/cc?dkey=" + encodeURIComponent( $rootScope.activeController.password ) + "&reboot=1" );
+							$http = $http || $injector.get( "$http" );
+
+							var promise;
+							var data = {
+								"referer": "client",
+								"apikey": $rootScope.activeController.apikey,
+								"deviceid": $rootScope.activeController.deviceid,
+								"cmd": JSON.stringify( { "q": "cc", "args": { "p": "reboot", "dkey": encodeURIComponent( $rootScope.activeController.password ) } } ),
+								"ch": "cc"
+							};
+							if ( $rootScope.activeController && $rootScope.activeController.apikey ) {
+								promise = CloudProxy.send( true, data );
+							} else {
+								data.params = { "dkey": encodeURIComponent( $rootScope.activeController.password ), "reboot": 1 };
+								promise = CloudProxy.send( false, data );
+							}
+
+							return promise.then( function( result ) {
+								if ( result.data.result !== undefined && result.data.result !== 1 ) {
+									$ionicPopup.alert( { title: "Check device key and try again." + JSON.stringify( result ) } );
+								} else {
+									$ionicPopup.alert( { title: "Reboot succesful!" } );
+								}
+							} );
 						}
 					} );
 				}
 			},
 			saveOptions: function( settings, callback ) {
-				$http = $http || $injector.get( "$http" );
+				var promise;
+				var data = {
+					"referer": "client",
+					"apikey": $rootScope.activeController.apikey,
+					"deviceid": $rootScope.activeController.deviceid,
+					"cmd": JSON.stringify( { "q": "co", "args": settings } ),
+					"ch": "co"
+				};
+				if ( $rootScope.activeController && $rootScope.activeController.apikey ) {
+					promise = CloudProxy.send( true, data );
+				} else {
+					data.params = settings;
+					data.params.dkey = encodeURIComponent( $rootScope.activeController.password );
+					promise = CloudProxy.send( false, data );
+				}
 
-	            return $http( {
-	                method: "GET",
-	                url: "http://" + $rootScope.activeController.ip + "/co?dkey=" + $rootScope.activeController.password,
-					params: settings,
-					paramSerializer: "$httpParamSerializerJQLike"
-	            } ).then(
+	            return promise.then(
 					function( result ) {
-						callback( result.data );
+						if ( angular.equals( result.data, {} ) ) {
+							callback( false );
+						} else {
+							callback( result.data );
+						}
 					},
 					function() {
 						callback( false );
@@ -674,15 +677,31 @@ angular.module( "opengarage.utils", [] )
 					if ( !scope.pwd.nkey || !scope.pwd.ckey || scope.pwd.nkey !== scope.pwd.ckey  ) {
 						return;
 					}
+					scope.pwd.dkey = encodeURIComponent( $rootScope.activeController.password );
 
-					$http = $http || $injector.get( "$http" );
+					var promise;
+					var data = {
+						"referer": "client",
+						"apikey": $rootScope.activeController.apikey,
+						"deviceid": $rootScope.activeController.deviceid,
+						"cmd": JSON.stringify( { "q": "co", "args": scope.pwd } ),
+						"ch": "co"
+					};
+					if ( $rootScope.activeController && $rootScope.activeController.apikey ) {
+						promise = CloudProxy.send( true, data );
+					} else {
+						data.params = scope.pwd;
+						promise = CloudProxy.send( false, data );
+					}
 
-		            $http( {
-		                method: "GET",
-		                url: "http://" + $rootScope.activeController.ip + "/co?dkey=" + $rootScope.activeController.password,
-						params: scope.pwd,
-						paramSerializer: "$httpParamSerializerJQLike"
-		            } ).then( function() {
+					promise.then( function( result ) {
+						if ( result.data.error !== undefined ) {
+							$ionicPopup.alert( {
+								template: "<p class='center'>" + result.data.error + "</p>"
+							} );
+							return;
+						}
+
 						$rootScope.activeController.password = scope.pwd.nkey;
 
 						var index = $rootScope.controllers.indexOf( ( $filter( "filter" )( $rootScope.controllers, { "mac": $rootScope.activeController.mac } ) || [] )[ 0 ] );
@@ -706,28 +725,16 @@ angular.module( "opengarage.utils", [] )
 
 				$http = $http || $injector.get( "$http" );
 				var promise;
+				var data = {
+					"referer": "client",
+					"apikey": $rootScope.activeController.apikey,
+					"deviceid": $rootScope.activeController.deviceid,
+					"cmd": JSON.stringify( { "q": "jl", "args": {} } ),
+					"ch": "jl"
+				};
+				var isCloud = $rootScope.activeController && $rootScope.activeController.apikey;
+				promise = CloudProxy.send( isCloud, data );
 
-				if ( $rootScope.activeController && $rootScope.activeController.apikey ) {
-					var data = {
-						"referer": "client",
-						"apikey": $rootScope.activeController.apikey,
-						"deviceid": $rootScope.activeController.deviceid,
-						"cmd": JSON.stringify( { "q": "jl", "args": {} } ),
-						"channel": "jl"
-					};
-					promise = $http( {
-						method: "POST",
-						url: Settings.httpServer + "/api/proxy/send",
-		                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-						params: data,
-						suppressLoader: true
-					} );
-				} else {
-					promise = $http( {
-		                method: "GET",
-		                url: "http://" + $rootScope.activeController.ip + "/jl"
-		            } );
-				}
 	            return promise.then(
 					function( result ) {
 						if ( $rootScope.activeController && $rootScope.activeController.apikey ) {
@@ -735,8 +742,6 @@ angular.module( "opengarage.utils", [] )
 								callback( false );
 								return;
 							}
-
-							result.data = JSON.parse( result.data.r );
 						}
 						callback( result.data.logs.sort( function( a, b ) { return b[ 0 ] - a[ 0 ]; } ) );
 					},
@@ -813,8 +818,46 @@ angular.module( "opengarage.utils", [] )
 	    };
 } ] )
 
+.factory( "CloudProxy", [ "$injector", "$rootScope", "Settings", function( $injector, $rootScope, Settings ) {
+
+	var send = function( isCloud, data ) {
+		var promise;
+		$http = $http || $injector.get( "$http" );
+		$q = $q || $injector.get( "$q" );
+		if ( isCloud ) {
+			promise = $http.post( Settings.httpServer + "/api/proxy/client/send_request", data )
+			.then( function( result ) {
+				var deferred = $q.defer();
+				if ( result.data.r !== undefined ) {
+					if ( result.data.r === "" ) {
+						result.data = result.data.error !== undefined ? result.data.error : {};
+					} else {
+						result.data = JSON.parse( result.data.r );
+					}
+				}
+				deferred.resolve( result );
+				return deferred.promise;
+			} );
+		} else {
+			promise = $http( {
+				method: "GET",
+				url: "http://" + $rootScope.activeController.ipAddr + "/" + data.ch,
+				params: data.params,
+				paramSerializer: "$httpParamSerializerJQLike",
+				suppressLoader: $rootScope.activeController.ipAddr ? false : true
+			} );
+		}
+
+		return promise;
+	}, $http, $q;
+
+	return {
+		send: send
+	};
+} ] )
+
 .factory( "Settings", [ function() {
-  var domain = "localhost:3000";
+  var domain = "cloud.opengarage.io";
 
   return {
     httpServer: "http://" + domain,
